@@ -1,9 +1,13 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+
+// Logger - 開発用ログ支援
 const { logger } = require('./lib/logger');
+// Logging - データのバックアップ用
 const logging = require('./lib/logging');
 
+// (XML <-> Object) Converter
 const fxp = (function (){
     const { XMLParser, XMLBuilder } = require("fast-xml-parser");
     const builder = new XMLBuilder({
@@ -14,32 +18,51 @@ const fxp = (function (){
     return { builder, parser };
 })();
 
+
+// Create Server
 const http = require('http');
 const server = http.createServer(async (req, res) => {
+    // Response 用関数を res にアサインする
+    const resHandler = {
+        /**
+         * 成功時
+         * @param {Object} payload 返却するデータ
+         */
+        ok: (payload = null) => {
+            payload = payload ?? { status: 'ok' };
+            res.writeHead(200, {
+                'Content-Type': 'applicatiion/json; charset=utf-8'
+            });
+            logger.debug('> ', payload);
+            res.end(JSON.stringify(payload));
+        },
+        /**
+         * 失敗時
+         * @param {String} message 返却するエラーメッセージ
+         */
+        bad: (message) => {
+            res.writeHead(400, {
+                'Content-Type': 'text/plain; charset=utf-8'
+            });
+            res.end(JSON.stringify({ error: message }));
+        }
+    };
+    Object.assign(res, { handler: resHandler });
+    
     const method = req.method;
     logger.debug('<', method, req.url);
     let result;
-    if (method == 'GET') result = await onGet(req, res, ok, bad);
-    if (method == 'POST') result = await onPost(req, res, ok, bad);
-    if (method == 'PUT') result = await onPut(req, res, ok, bad);
-    if (method == 'DELETE') result = await onDelete(req, res, ok, bad);
-
-    function bad(req, res, message) {
-        res.writeHead(400, {
-            'Content-Type': 'text/plain; charset=utf-8'
-        });
-        res.end(message);
-    }
-
-    function ok(req, res, jsontext) {
-        res.writeHead(200, {
-            'Content-Type': 'applicatiion/json; charset=utf-8'
-        });
-        logger.debug('> RESPONSE', jsontext);
-        res.end(jsontext);
-    }
+    if (method == 'GET') result = await onGet(req, res);
+    if (method == 'POST') result = await onPost(req, res);
+    if (method == 'PUT') result = await onPut(req, res);
+    if (method == 'DELETE') result = await onDelete(req, res);
 });
 
+/**
+ * URL から Path および Params を探して、扱いやすいオブジェクトにする
+ * @param {String} _url 対象となる URL eg: /id/foo?x=123
+ * @returns {Object} { paths: [] | null, params: URLSerchParams | null }
+ */
 const checkUrl = (_url) => {
     // '/foo/var?x=123' -> ['foo', 'var'] | null
     const paths = (function (url){
@@ -57,16 +80,19 @@ const checkUrl = (_url) => {
     return { paths, params };
 }
 
-const srcPath = (_id, fnPrefix = null) => {
+/**
+ * ID から ファイルパスを生成する
+ * @param {String} _id 対象となる ID
+ * @returns {String} ファイルパス eg: ./data/idfoo.XML
+ */
+const srcPath = (_id) => {
     const EXT = process.env.FILEFORMAT || 'XML';
     const FOLDER = process.env.FOLDER || './data';
-    const fileName = (fnPrefix)
-        ? `${fnPrefix}.${_id}.${EXT}`
-        : `${_id}.${EXT}`;
+    const fileName = `${_id}.${EXT}`;
     return path.join(FOLDER, fileName);
 }
 
-async function onGet(req, res, ok, bad) {
+async function onGet(req, res) {
     const query = checkUrl(req.url);
     try {
         if (query.paths === null) throw new Error('ID is not appoiinted');
@@ -74,14 +100,14 @@ async function onGet(req, res, ok, bad) {
         if (!fs.existsSync(src)) throw new Error('File is not exist');
         const text = fs.readFileSync(src);
         const content = fxp.parser.parse(text);
-        ok(req, res, JSON.stringify(content))
+        res.handler.ok(content)
     } catch (error) {
         logger.info(error);
-        bad(req, res, error.message);
+        res.handler.bad(error.message);
     }
 }
 
-async function onPost(req, res, ok, bad) {
+async function onPost(req, res) {
     const query = checkUrl(req.url);
     try {
         if (query.paths === null) throw new Error('ID is not appointed');
@@ -97,16 +123,16 @@ async function onPost(req, res, ok, bad) {
                     logger.warn(err);
                     throw err;
                 }
-                ok(req, res, '');
+                res.handler.ok();
             });
         });
     } catch (error) {
         logger.info(error);
-        bad(req, res, error.message);
+        res.handler.bad(error.message);
     }
 }
 
-async function onPut(req, res, ok, bad) {
+async function onPut(req, res) {
     const query = checkUrl(req.url);
     try {
         if (query.paths === null) throw new Error('ID is not appointed');
@@ -122,16 +148,16 @@ async function onPut(req, res, ok, bad) {
                     logger.warn(err);
                     throw err;
                 }
-                ok(req, res, '');
+                res.handler.ok();
             });
         });
     } catch (error) {
         logger.info(error);
-        bad(req, res, error.message);
+        res.handler.bad(error.message);
     }
 }
 
-async function onDelete(req, res, ok, bad) {
+async function onDelete(req, res) {
     const query = checkUrl(req.url);
     try {
         if (query.paths === null) throw new Error('ID is not appointed');
@@ -143,11 +169,11 @@ async function onDelete(req, res, ok, bad) {
                 logger.warn(err);
                 throw err;
             }
-            ok(req, res, '');
+            res.handler.ok();
         });
     } catch (error) {
         logger.info(error);
-        bad(req, res, error.message);
+        res.handler.bad(error.message);
     }
 }
 
